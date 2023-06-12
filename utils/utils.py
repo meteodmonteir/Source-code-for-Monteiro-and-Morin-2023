@@ -81,7 +81,7 @@ def applied_mask_from_shp(data, shp_path, data_lat_label = "lat", data_lon_label
 
 def core_theilslopes(y, time,method, seasonal, period):
     
-    dt = 1.1574e14*365*10 # Factor of the trends to transform it in /dec [conversion from nanosecond to decade]
+    dt = 365.25*10 # Factor of the trends to transform it in /dec [conversion from day to decade]
     
     if (np.count_nonzero(~np.isnan(y))/len(y))*100 < 80: # Skip if there are more than 20% of nan in the array
         
@@ -91,17 +91,17 @@ def core_theilslopes(y, time,method, seasonal, period):
         
         if method == 'OLS':
             
-            ols_model = sm.OLS(y,sm.add_constant(pd.to_numeric(time)/dt)).fit()
+            ols_model = sm.OLS(y,sm.add_constant(pd.to_numeric(time.astype('datetime64[D]')))).fit()
             slope, lowslope, upslope = ols_model.params[1], ols_model.conf_int(0.05)[1][0],ols_model.conf_int(0.05)[1][1]
         
         elif method == 'GLS':
             
             if np.count_nonzero(~np.isnan(y)) >= len(y): # Skip if there are any nan, because GLS will fail
-                ols_resid = sm.OLS(y,sm.add_constant(pd.to_numeric(time)/dt)).fit().resid # Calculate residual of the OLS
+                ols_resid = sm.OLS(y,sm.add_constant(pd.to_numeric(time.astype('datetime64[D]')))).fit().resid # Calculate residual of the OLS
                 resid_fit = sm.OLS(np.asarray(ols_resid)[1:], sm.add_constant(np.asarray(ols_resid)[:-1])).fit() # Fit the residual with an OLS
                 rho = resid_fit.params[1] # Use it to determine the order of AR(1) = coefficient
                 sigma = rho ** toeplitz(range(len(ols_resid)))
-                gls_model = sm.GLS(y,sm.add_constant(pd.to_numeric(time)/dt),sigma=sigma).fit() # Fit the GLS
+                gls_model = sm.GLS(y,sm.add_constant(pd.to_numeric(time.astype('datetime64[D]'))),sigma=sigma).fit() # Fit the GLS
                 slope, lowslope, upslope = gls_model.params[1], gls_model.conf_int(0.05)[1][0],gls_model.conf_int(0.05)[1][1]
  
             else:
@@ -110,8 +110,8 @@ def core_theilslopes(y, time,method, seasonal, period):
         elif method == 'TS':
             
             my = np.ma.masked_array(y, mask=np.isnan(y))
-            slope, medintercept, lowslope, upslope = stats.mstats.theilslopes(my,time)
-            slope, medintercept, lowslope, upslope = slope*dt, medintercept*dt, lowslope*dt, upslope*dt
+            slope, medintercept, lowslope, upslope = stats.mstats.theilslopes(my,time.astype('datetime64[D]'))
+            slope, medintercept, lowslope, upslope = slope, medintercept, lowslope, upslope
             
         elif method == 'GLSAR':
             
@@ -119,7 +119,7 @@ def core_theilslopes(y, time,method, seasonal, period):
                 slope, lowslope, upslope = np.nan,np.nan,np.nan
                 
             else:
-                glsar_model = sm.GLSAR(y,sm.add_constant(pd.to_numeric(time)/dt),rho = 1).fit()
+                glsar_model = sm.GLSAR(y,sm.add_constant(pd.to_numeric(time.astype('datetime64[D]'))),rho = 1).fit()
                 slope, lowslope, upslope = glsar_model.params[1], glsar_model.conf_int(0.05)[1][0],glsar_model.conf_int(0.05)[1][1]
 
         if seasonal == True:
@@ -128,7 +128,7 @@ def core_theilslopes(y, time,method, seasonal, period):
         else:
             mktest = mk.original_test(y, alpha =0.05).p
         
-        return np.array([slope, lowslope, upslope, mktest])
+        return np.array([slope*dt, lowslope*dt, upslope*dt, mktest])
     
 ####################################################################################################################
 
@@ -344,19 +344,19 @@ def resampled_xesmf(ds_in,ds_out,in_x = 'x',in_y = 'y',out_x = 'x', out_y = 'y',
         ds_in = ds_in.set_coords(['lat_b','lon_b'])
         
         if len(np.shape(ds_out['lat'])) > 1: # Defined lat/lon bounds for 2D curvilinear grid
-            diff_lat = ds_out.lat.differentiate(coord = in_y) # Compute the gradient along y
+            diff_lat = ds_out.lat.differentiate(coord = out_y) # Compute the gradient along y
             lat_b = ds_out.lat - diff_lat/2 # Get the inferior boundaries
             lat_b = np.vstack([lat_b, lat_b[-1,:] + diff_lat[-1,:]]) # Append the upper boundary (append a row at the top) taking the row-1 gradient values to append
             lat_b = np.c_[lat_b, lat_b[:,-1] + np.append(diff_lat[:,-1], diff_lat[-1,-1])] # Same for the column, but you also have to append the gradient of 1 row at the top, just as you did the last line
 
-            lat_b = xr.DataArray(data = lat_b,dims = ('yb','xb'), coords = ( np.append(ds_out[in_y] - (ds_out[in_y][-1]-ds_out[in_y][-2])/2,ds_out[in_y][-1]+(ds_out[in_y][-1]-ds_out[in_y][-2])/2), np.append(ds_out[in_x] - (ds_out[in_x][-1]-ds_out[in_x][-2])/2 ,ds_out[in_x][-1]+(ds_out[in_x][-1]-ds_out[in_x][-2])/2) ) )
+            lat_b = xr.DataArray(data = lat_b,dims = ('yb','xb'), coords = ( np.append(ds_out[out_y] - (ds_out[out_y][-1]-ds_out[out_y][-2])/2,ds_out[out_y][-1]+(ds_out[out_y][-1]-ds_out[out_y][-2])/2), np.append(ds_out[out_x] - (ds_out[out_x][-1]-ds_out[out_x][-2])/2 ,ds_out[out_x][-1]+(ds_out[out_x][-1]-ds_out[out_x][-2])/2) ) )
 
-            diff_lon = ds_out.lon.differentiate(coord = in_x) # Compute the gradient along x
+            diff_lon = ds_out.lon.differentiate(coord = out_x) # Compute the gradient along x
             lon_b = ds_out.lon - diff_lon/2 # Get the inferior boundaries
             lon_b = np.vstack([lon_b, lon_b[-1,:] + diff_lon[-1,:]]) # Append the upper boundary (append a row at the top) taking the row-1 gradient values to append
             lon_b = np.c_[lon_b, lon_b[:,-1] + np.append(diff_lon[:,-1], diff_lon[-1,-1])] # Same for the column, but you also have to append the gradient of 1 row at the top, just as you did the last line
 
-            lon_b = xr.DataArray(data = lon_b,dims = ('yb','xb'), coords = ( np.append(ds_out[in_y] - (ds_out[in_y][-1]-ds_out[in_y][-2])/2,ds_out[in_y][-1]+(ds_out[in_y][-1]-ds_out[in_y][-2])/2), np.append(ds_out[in_x] - (ds_out[in_x][-1]-ds_out[in_x][-2])/2 ,ds_out[in_x][-1]+(ds_out[in_x][-1]-ds_out[in_x][-2])/2) ) )
+            lon_b = xr.DataArray(data = lon_b,dims = ('yb','xb'), coords = ( np.append(ds_out[out_y] - (ds_out[out_y][-1]-ds_out[out_y][-2])/2,ds_out[out_y][-1]+(ds_out[out_y][-1]-ds_out[out_y][-2])/2), np.append(ds_out[out_x] - (ds_out[out_x][-1]-ds_out[out_x][-2])/2 ,ds_out[out_x][-1]+(ds_out[out_x][-1]-ds_out[out_x][-2])/2) ) )
             
         else: # Defined lat/lon bounds for 1D rectilinear grid
             lat_b = np.linspace(ds_out.lat[0]-(ds_out.lat[1]-ds_out.lat[0])/2,ds_out.lat[-1]+(ds_out.lat[1]-ds_out.lat[0])/2,len(ds_out.lat)+1)
@@ -373,6 +373,66 @@ def resampled_xesmf(ds_in,ds_out,in_x = 'x',in_y = 'y',out_x = 'x', out_y = 'y',
     return regrid(ds_in,na_thres=0.5)
 
 
+
+# def resampled_xesmf(ds_in,ds_out,in_x = 'x',in_y = 'y',out_x = 'x', out_y = 'y',method='conservative', ignore_degenerate = True):
+
+#     if method == 'conservative':
+        
+#         if len(np.shape(ds_in['lat'])) > 1: # Defined lat/lon bounds for 2D curvilinear grid
+           
+#             diff_lat = ds_in.lat.differentiate(coord = in_y) # Compute the gradient along y
+#             lat_b = ds_in.lat - diff_lat/2 # Get the inferior boundaries
+#             lat_b = np.vstack([lat_b, lat_b[-1,:] + diff_lat[-1,:]]) # Append the upper boundary (append a row at the top) taking the row-1 gradient values to append
+#             lat_b = np.c_[lat_b, lat_b[:,-1] + np.append(diff_lat[:,-1], diff_lat[-1,-1])] # Same for the column, but you also have to append the gradient of 1 row at the top, just as you did the last line
+
+#             lat_b = xr.DataArray(data = lat_b,dims = ('yb','xb'), coords = ( np.append(ds_in[in_y] - (ds_in[in_y][-1]-ds_in[in_y][-2])/2,ds_in[in_y][-1]+(ds_in[in_y][-1]-ds_in[in_y][-2])/2), np.append(ds_in[in_x] - (ds_in[in_x][-1]-ds_in[in_x][-2])/2 ,ds_in[in_x][-1]+(ds_in[in_x][-1]-ds_in[in_x][-2])/2) ) )
+
+#             diff_lon = ds_in.lon.differentiate(coord = in_x) # Compute the gradient along x
+#             lon_b = ds_in.lon - diff_lon/2 # Get the inferior boundaries
+#             lon_b = np.vstack([lon_b, lon_b[-1,:] + diff_lon[-1,:]]) # Append the upper boundary (append a row at the top) taking the row-1 gradient values to append
+#             lon_b = np.c_[lon_b, lon_b[:,-1] + np.append(diff_lon[:,-1], diff_lon[-1,-1])] # Same for the column, but you also have to append the gradient of 1 row at the top, just as you did the last line
+
+#             lon_b = xr.DataArray(data = lon_b,dims = ('yb','xb'), coords = ( np.append(ds_in[in_y] - (ds_in[in_y][-1]-ds_in[in_y][-2])/2,ds_in[in_y][-1]+(ds_in[in_y][-1]-ds_in[in_y][-2])/2), np.append(ds_in[in_x] - (ds_in[in_x][-1]-ds_in[in_x][-2])/2 ,ds_in[in_x][-1]+(ds_in[in_x][-1]-ds_in[in_x][-2])/2) ) )
+            
+#         else: # Defined lat/lon bounds for 1D rectilinear grid
+#             lat_b = np.linspace(ds_in.lat[0]-(ds_in.lat[1]-ds_in.lat[0])/2,ds_in.lat[-1]+(ds_in.lat[1]-ds_in.lat[0])/2,len(ds_in.lat)+1)
+#             lon_b = np.linspace(ds_in.lon[0]-(ds_in.lon[1]-ds_in.lon[0])/2,ds_in.lon[-1]+(ds_in.lon[1]-ds_in.lon[0])/2,len(ds_in.lon)+1)
+
+#             lon_b = xr.DataArray(data = lon_b,dims = ('xb'))
+#             lat_b = xr.DataArray(data = lat_b,dims = ('yb'))
+
+#         ds_in['lon_b'] = lon_b
+#         ds_in['lat_b'] = lat_b
+#         ds_in = ds_in.set_coords(['lat_b','lon_b'])
+        
+#         if len(np.shape(ds_out['lat'])) > 1: # Defined lat/lon bounds for 2D curvilinear grid
+#             diff_lat = ds_out.lat.differentiate(coord = in_y) # Compute the gradient along y
+#             lat_b = ds_out.lat - diff_lat/2 # Get the inferior boundaries
+#             lat_b = np.vstack([lat_b, lat_b[-1,:] + diff_lat[-1,:]]) # Append the upper boundary (append a row at the top) taking the row-1 gradient values to append
+#             lat_b = np.c_[lat_b, lat_b[:,-1] + np.append(diff_lat[:,-1], diff_lat[-1,-1])] # Same for the column, but you also have to append the gradient of 1 row at the top, just as you did the last line
+
+#             lat_b = xr.DataArray(data = lat_b,dims = ('yb','xb'), coords = ( np.append(ds_out[in_y] - (ds_out[in_y][-1]-ds_out[in_y][-2])/2,ds_out[in_y][-1]+(ds_out[in_y][-1]-ds_out[in_y][-2])/2), np.append(ds_out[in_x] - (ds_out[in_x][-1]-ds_out[in_x][-2])/2 ,ds_out[in_x][-1]+(ds_out[in_x][-1]-ds_out[in_x][-2])/2) ) )
+
+#             diff_lon = ds_out.lon.differentiate(coord = in_x) # Compute the gradient along x
+#             lon_b = ds_out.lon - diff_lon/2 # Get the inferior boundaries
+#             lon_b = np.vstack([lon_b, lon_b[-1,:] + diff_lon[-1,:]]) # Append the upper boundary (append a row at the top) taking the row-1 gradient values to append
+#             lon_b = np.c_[lon_b, lon_b[:,-1] + np.append(diff_lon[:,-1], diff_lon[-1,-1])] # Same for the column, but you also have to append the gradient of 1 row at the top, just as you did the last line
+
+#             lon_b = xr.DataArray(data = lon_b,dims = ('yb','xb'), coords = ( np.append(ds_out[in_y] - (ds_out[in_y][-1]-ds_out[in_y][-2])/2,ds_out[in_y][-1]+(ds_out[in_y][-1]-ds_out[in_y][-2])/2), np.append(ds_out[in_x] - (ds_out[in_x][-1]-ds_out[in_x][-2])/2 ,ds_out[in_x][-1]+(ds_out[in_x][-1]-ds_out[in_x][-2])/2) ) )
+            
+#         else: # Defined lat/lon bounds for 1D rectilinear grid
+#             lat_b = np.linspace(ds_out.lat[0]-(ds_out.lat[1]-ds_out.lat[0])/2,ds_out.lat[-1]+(ds_out.lat[1]-ds_out.lat[0])/2,len(ds_out.lat)+1)
+#             lon_b = np.linspace(ds_out.lon[0]-(ds_out.lon[1]-ds_out.lon[0])/2,ds_out.lon[-1]+(ds_out.lon[1]-ds_out.lon[0])/2,len(ds_out.lon)+1)
+
+#             lon_b = xr.DataArray(data = lon_b,dims = ('xb'))
+#             lat_b = xr.DataArray(data = lat_b,dims = ('yb'))
+
+#         ds_out['lon_b'] = lon_b
+#         ds_out['lat_b'] = lat_b
+#         ds_out = ds_out.set_coords(['lat_b','lon_b'])
+
+#     regrid = xe.Regridder(ds_in,ds_out, method = method, ignore_degenerate=ignore_degenerate)
+#     return regrid(ds_in,na_thres=0.5)
 ####################################################################################################################
 
 ### TaylorDiagram, function belonging to Y.Copin ###
